@@ -13,6 +13,8 @@ pipeline {
         REGISTRY = 'localhost:5000'
         KUBECTL_VERSION = 'v1.28.0'
         HELM_VERSION = 'v3.12.0'
+        // Credencial para GitHub (esto crea GITHUB_CRED_USR y GITHUB_CRED_PSW)
+        GITHUB_CRED = credentials('github-token-for-ci')
     }
     stages {
         stage('Setup Tools') {
@@ -20,25 +22,34 @@ pipeline {
                 script {
                     echo "🔧 Instalando herramientas necesarias..."
                     // Instalar kubectl
-                    sh """
+                    sh '''
                         wget -q -O /usr/local/bin/kubectl https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl
                         chmod +x /usr/local/bin/kubectl
-                    """
+                    '''
                     // Instalar helm
-                    sh """
+                    sh '''
                         wget -q -O helm.tar.gz https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz
                         tar -xzf helm.tar.gz
                         mv linux-amd64/helm /usr/local/bin/
                         chmod +x /usr/local/bin/helm
                         rm -rf helm.tar.gz linux-amd64
-                    """
+                    '''
                 }
             }
         }
         
         stage('Checkout & Detect Environment') {
             steps {
-                checkout scm
+                // Checkout usando las credenciales de GitHub
+                checkout([
+                    $class: 'GitSCM',
+                    branches: scm.branches,
+                    extensions: scm.extensions,
+                    userRemoteConfigs: [[
+                        url: scm.userRemoteConfigs[0].url,
+                        credentialsId: 'github-token-for-ci'
+                    ]]
+                ])
                 script {
                     if (env.BRANCH_NAME == 'main') {
                         env.TARGET_ENVIRONMENT = 'production'
@@ -67,21 +78,21 @@ pipeline {
                 script {
                     echo "🔐 Configurando acceso a Kubernetes..."
                     withCredentials([file(credentialsId: 'kubeconfig-secret', variable: 'KUBECONFIG_FILE')]) {
-                        sh """
+                        sh '''
                             mkdir -p /root/.kube
                             cp ${KUBECONFIG_FILE} /root/.kube/config
                             chmod 600 /root/.kube/config
-                        """
+                        '''
                     }
                     // Verificar conexión al cluster
-                    sh """
+                    sh '''
                         echo "=== Verificando conexión al cluster ==="
                         kubectl cluster-info
                         echo "=== Nodos del cluster ==="
                         kubectl get nodes
                         echo "=== Namespaces existentes ==="
                         kubectl get namespaces
-                    """
+                    '''
                 }
             }
         }
@@ -94,9 +105,9 @@ pipeline {
                 script {
                     echo "🐳 Construyendo imagen Docker..."
                     dir('apps/jugadores-app') {
-                        sh """
+                        sh '''
                             docker build -t ${REGISTRY}/${APP_NAME}:${env.IMAGE_TAG} .
-                        """
+                        '''
                     }
                 }
             }
@@ -109,9 +120,9 @@ pipeline {
             steps {
                 script {
                     echo "📤 Subiendo imagen al registry..."
-                    sh """
+                    sh '''
                         docker push ${REGISTRY}/${APP_NAME}:${env.IMAGE_TAG}
-                    """
+                    '''
                 }
             }
         }
@@ -125,12 +136,12 @@ pipeline {
                     echo "🚀 Desplegando en ${env.TARGET_ENVIRONMENT}..."
                     
                     // Verificar que el namespace existe, si no crearlo
-                    sh """
+                    sh '''
                         kubectl get namespace ${env.TARGET_ENVIRONMENT} || kubectl create namespace ${env.TARGET_ENVIRONMENT}
-                    """
+                    '''
                     
                     dir('charts/jugadores-app') {
-                        sh """
+                        sh '''
                             helm upgrade --install ${APP_NAME} . \
                                 --namespace ${env.TARGET_ENVIRONMENT} \
                                 --set image.repository=${REGISTRY}/${APP_NAME} \
@@ -138,7 +149,7 @@ pipeline {
                                 --set environment=${env.TARGET_ENVIRONMENT} \
                                 --atomic \
                                 --timeout 10m
-                        """
+                        '''
                     }
                     
                     echo "✅ Despliegue completado en ${env.TARGET_ENVIRONMENT}"
@@ -153,13 +164,13 @@ pipeline {
             steps {
                 script {
                     echo "🔍 Verificando despliegue..."
-                    sh """
+                    sh '''
                         kubectl rollout status deployment/${APP_NAME} -n ${env.TARGET_ENVIRONMENT} --timeout=300s
                         echo "=== Pods del despliegue ==="
                         kubectl get pods -n ${env.TARGET_ENVIRONMENT} -l app=${APP_NAME}
                         echo "=== Servicios ==="
                         kubectl get svc -n ${env.TARGET_ENVIRONMENT} -l app=${APP_NAME}
-                    """
+                    '''
                 }
             }
         }
@@ -168,20 +179,20 @@ pipeline {
         success {
             echo "🎉 Pipeline EXITOSO! Aplicación desplegada en ${env.TARGET_ENVIRONMENT}"
             script {
-                sh """
+                sh '''
                     echo "📊 Resumen final:"
                     kubectl get all -n ${env.TARGET_ENVIRONMENT} -l app=${APP_NAME}
-                """
+                '''
             }
         }
         failure {
             echo "❌ Pipeline FALLÓ"
             script {
-                sh """
+                sh '''
                     echo "🔍 Información de debug:"
                     kubectl get events -n ${env.TARGET_ENVIRONMENT} --sort-by='.lastTimestamp' | tail -10 || true
                     kubectl describe deployment/${APP_NAME} -n ${env.TARGET_ENVIRONMENT} || true
-                """
+                '''
             }
         }
     }
