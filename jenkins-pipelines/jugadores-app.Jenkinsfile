@@ -13,8 +13,6 @@ pipeline {
         REGISTRY = 'localhost:5000'
         KUBECTL_VERSION = 'v1.28.0'
         HELM_VERSION = 'v3.12.0'
-        // Credencial para GitHub (esto crea GITHUB_CRED_USR y GITHUB_CRED_PSW)
-        GITHUB_CRED = credentials('github-token-for-ci')
     }
     stages {
         stage('Setup Tools') {
@@ -30,7 +28,7 @@ pipeline {
                     sh '''
                         wget -q -O helm.tar.gz https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz
                         tar -xzf helm.tar.gz
-                        mv linux-amd64/helm /usr/local/bin/
+                        mv linux-amd64/helm /usr/local/bin/helm
                         chmod +x /usr/local/bin/helm
                         rm -rf helm.tar.gz linux-amd64
                     '''
@@ -40,7 +38,6 @@ pipeline {
         
         stage('Checkout & Detect Environment') {
             steps {
-                // Checkout usando las credenciales de GitHub
                 checkout([
                     $class: 'GitSCM',
                     branches: scm.branches,
@@ -84,13 +81,11 @@ pipeline {
                             chmod 600 /root/.kube/config
                         '''
                     }
-                    // Verificar conexión al cluster
+                    // Verificar conexión
                     sh '''
-                        echo "=== Verificando conexión al cluster ==="
+                        echo "=== Verificando cluster ==="
                         kubectl cluster-info
-                        echo "=== Nodos del cluster ==="
-                        kubectl get nodes
-                        echo "=== Namespaces existentes ==="
+                        echo "=== Verificando nombrespaces ==="
                         kubectl get namespaces
                     '''
                 }
@@ -135,9 +130,9 @@ pipeline {
                 script {
                     echo "🚀 Desplegando en ${env.TARGET_ENVIRONMENT}..."
                     
-                    // Verificar que el namespace existe, si no crearlo
+                    // Crear namespace si no existe
                     sh '''
-                        kubectl get namespace ${env.TARGET_ENVIRONMENT} || kubectl create namespace ${env.TARGET_ENVIRONMENT}
+                        kubectl create namespace ${env.TARGET_ENVIRONMENT} --dry-run=client -o yaml | kubectl apply -f -
                     '''
                     
                     dir('charts/jugadores-app') {
@@ -166,10 +161,21 @@ pipeline {
                     echo "🔍 Verificando despliegue..."
                     sh '''
                         kubectl rollout status deployment/${APP_NAME} -n ${env.TARGET_ENVIRONMENT} --timeout=300s
-                        echo "=== Pods del despliegue ==="
+                        echo "=== Pods ==="
                         kubectl get pods -n ${env.TARGET_ENVIRONMENT} -l app=${APP_NAME}
-                        echo "=== Servicios ==="
+                        echo "=== Services ==="
                         kubectl get svc -n ${env.TARGET_ENVIRONMENT} -l app=${APP_NAME}
+                    '''
+                }
+            }
+        }
+        
+        stage('Final Status Report') {
+            steps {
+                script {
+                    echo "📊 Resumen final:"
+                    sh '''
+                        kubectl get all -n ${env.TARGET_ENVIRONMENT} -l app=${APP_NAME}
                     '''
                 }
             }
@@ -178,21 +184,13 @@ pipeline {
     post {
         success {
             echo "🎉 Pipeline EXITOSO! Aplicación desplegada en ${env.TARGET_ENVIRONMENT}"
-            script {
-                sh '''
-                    echo "📊 Resumen final:"
-                    kubectl get all -n ${env.TARGET_ENVIRONMENT} -l app=${APP_NAME}
-                '''
-            }
         }
         failure {
             echo "❌ Pipeline FALLÓ"
+            // Comandos simples sin 'sh' que no requieren contexto de nodo
             script {
-                sh '''
-                    echo "🔍 Información de debug:"
-                    kubectl get events -n ${env.TARGET_ENVIRONMENT} --sort-by='.lastTimestamp' | tail -10 || true
-                    kubectl describe deployment/${APP_NAME} -n ${env.TARGET_ENVIRONMENT} || true
-                '''
+                echo "🔍 Revisa los logs anteriores para más detalles del error"
+                echo "💡 Verifica que Docker esté funcionando y el registry sea accesible"
             }
         }
     }
