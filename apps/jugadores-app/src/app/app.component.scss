@@ -1,0 +1,17 @@
+ion-menu {
+  ion-content {
+    --background: var(--ion-item-background, var(--ion-background-color, #fff));
+  }
+
+  ion-list {
+    background: transparent;
+  }
+
+  ion-item {
+    --background: transparent;
+
+    &.active {
+      --background: rgba(var(--ion-color-primary-rgb), 0.1);
+    }
+  }
+}

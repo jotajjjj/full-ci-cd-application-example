@@ -1,0 +1,90 @@
+<ion-header>
+  <ion-toolbar>
+    <ion-buttons slot="start">
+      <ion-menu-button></ion-menu-button>
+    </ion-buttons>
+    <ion-title>Editar Jugador</ion-title>
+    <ion-buttons slot="end">
+      <ion-button (click)="updatePlayer()">
+        <ion-icon slot="icon-only" name="save"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content>
+  <form (ngSubmit)="updatePlayer()" #playerForm="ngForm">
+    <ion-list>
+      <ion-item>
+        <ion-label position="stacked">Nombre *</ion-label>
+        <ion-input 
+          type="text" 
+          [(ngModel)]="player.nombre" 
+          name="nombre" 
+          required
+          #nombre="ngModel">
+        </ion-input>
+      </ion-item>
+      <ion-item *ngIf="nombre.invalid && nombre.touched">
+        <ion-text color="danger">El nombre es obligatorio</ion-text>
+      </ion-item>
+
+      <ion-item>
+        <ion-label position="stacked">Apellido *</ion-label>
+        <ion-input 
+          type="text" 
+          [(ngModel)]="player.apellido" 
+          name="apellido" 
+          required
+          #apellido="ngModel">
+        </ion-input>
+      </ion-item>
+      <ion-item *ngIf="apellido.invalid && apellido.touched">
+        <ion-text color="danger">El apellido es obligatorio</ion-text>
+      </ion-item>
+
+      <ion-item>
+        <ion-label position="stacked">Equipo</ion-label>
+        <ion-input 
+          type="text" 
+          [(ngModel)]="player.equipo" 
+          name="equipo">
+        </ion-input>
+      </ion-item>
+
+      <ion-item>
+        <ion-label position="stacked">Descripción</ion-label>
+        <ion-textarea 
+          [(ngModel)]="player.descripcion" 
+          name="descripcion"
+          rows="4">
+        </ion-textarea>
+      </ion-item>
+
+      <ion-item>
+        <ion-label position="stacked">Estado *</ion-label>
+        <ion-select 
+          [(ngModel)]="player.estado" 
+          name="estado" 
+          required
+          #estado="ngModel">
+          <ion-select-option value="presente">Presente</ion-select-option>
+          <ion-select-option value="ausencia_justificada">Ausencia Justificada</ion-select-option>
+          <ion-select-option value="ausencia_injustificada">Ausencia Injustificada</ion-select-option>
+          <ion-select-option value="vacaciones">Vacaciones</ion-select-option>
+        </ion-select>
+      </ion-item>
+      <ion-item *ngIf="estado.invalid && estado.touched">
+        <ion-text color="danger">El estado es obligatorio</ion-text>
+      </ion-item>
+    </ion-list>
+  </form>
+</ion-content>
+
+<ion-footer>
+  <ion-toolbar>
+    <ion-button expand="block" (click)="updatePlayer()" [disabled]="!playerForm.form.valid">
+      Actualizar Jugador
+    </ion-button>
+  </ion-toolbar>
+</ion-footer>

@@ -1,0 +1,26 @@
+<ion-app>
+  <ion-split-pane contentId="main-content">
+    <!-- Menú lateral -->
+    <ion-menu contentId="main-content" type="overlay">
+      <ion-content>
+        <ion-list>
+          <ion-list-header>Gestión de Jugadores</ion-list-header>
+          
+          <ion-menu-toggle auto-hide="false">
+            <ion-item 
+              [routerDirection]="'root'" 
+              [routerLink]="'/player-list'" 
+              lines="none"
+              detail="false">
+              <ion-icon slot="start" name="people"></ion-icon>
+              <ion-label>Gestionar Jugadores</ion-label>
+            </ion-item>
+          </ion-menu-toggle>
+        </ion-list>
+      </ion-content>
+    </ion-menu>
+
+    <!-- Contenido principal -->
+    <ion-router-outlet id="main-content"></ion-router-outlet>
+  </ion-split-pane>
+</ion-app>

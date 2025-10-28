@@ -1,0 +1,7 @@
+{
+  "name": "jugadores-app",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "angular-standalone"
+}
