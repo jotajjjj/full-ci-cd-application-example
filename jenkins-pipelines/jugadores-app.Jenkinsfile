@@ -1,17 +1,10 @@
 pipeline {
     agent any
     options {
-        skipDefaultCheckout true
-    }
-    parameters {
-        choice(
-            name: 'MANUAL_ENVIRONMENT',
-            choices: ['dev', 'staging', 'production'],
-            description: 'SOBREESCRIBIR entorno (solo para ejecución manual)'
-        )
+        timeout(time: 30, unit: 'MINUTES')
     }
     environment {
-        APP_NAME = 'jugadores-app'  // ⬅️ CAMBIADO
+        APP_NAME = 'jugadores-app'
         REGISTRY = 'localhost:5000'
     }
     stages {
@@ -19,6 +12,7 @@ pipeline {
             steps {
                 checkout scm
                 script {
+                    // Detectar entorno por rama
                     if (env.BRANCH_NAME == 'main') {
                         env.TARGET_ENVIRONMENT = 'production'
                     } else if (env.BRANCH_NAME == 'staging') {
@@ -29,70 +23,81 @@ pipeline {
                         env.TARGET_ENVIRONMENT = 'none'
                     }
                     
-                    if (params.MANUAL_ENVIRONMENT) {
-                        env.TARGET_ENVIRONMENT = params.MANUAL_ENVIRONMENT
-                    }
+                    // Tag único para la imagen
+                    env.IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
                     
                     echo "🎯 Rama: ${env.BRANCH_NAME}"
-                    echo "🏭 Entorno destino: ${env.TARGET_ENVIRONMENT}"
+                    echo "🏭 Entorno: ${env.TARGET_ENVIRONMENT}"
+                    echo "🐳 Image Tag: ${env.IMAGE_TAG}"
                 }
             }
         }
         
-        stage('Tests') {
-            steps {
-                echo "🧪 Ejecutando tests para ${APP_NAME}..."
-                sh '''
-                    echo "Verificando estructura..."
-                    [ -f "apps/simple-webapp/Dockerfile" ] || exit 1
-                    [ -f "charts/jugadores-app/Chart.yaml" ] || exit 1
-                    echo "✅ Estructura correcta"
-                '''
-            }
-        }
-        
-        stage('Build Image') {
+        stage('Build Docker Image') {
             when {
                 expression { env.TARGET_ENVIRONMENT != 'none' }
             }
             steps {
-                echo "🐳 Construyendo imagen ${APP_NAME} para ${env.TARGET_ENVIRONMENT}"
                 script {
-                    def imageTag = "${env.BRANCH_NAME}-${env.BUILD_ID}"
-                    if (env.BRANCH_NAME == 'main') {
-                        imageTag = "v${env.BUILD_ID}"
-                    }
-                    
-                    dir('apps/simple-webapp') {
+                    echo "🐳 Construyendo imagen Docker..."
+                    dir('apps/jugadores-app') {
                         sh """
-                            docker build -t ${REGISTRY}/${APP_NAME}:${imageTag} .
+                            docker build -t ${REGISTRY}/${APP_NAME}:${env.IMAGE_TAG} .
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Push to Registry') {
+            when {
+                expression { env.TARGET_ENVIRONMENT != 'none' }
+            }
+            steps {
+                script {
+                    echo "📤 Subiendo imagen al registry..."
+                    sh """
+                        docker tag ${REGISTRY}/${APP_NAME}:${env.IMAGE_TAG} ${REGISTRY}/${APP_NAME}:${env.IMAGE_TAG}
+                        docker push ${REGISTRY}/${APP_NAME}:${env.IMAGE_TAG}
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy to Environment') {
+            when {
+                expression { env.TARGET_ENVIRONMENT != 'none' }
+            }
+            steps {
+                script {
+                    echo "🚀 Desplegando en ${env.TARGET_ENVIRONMENT}..."
+                    dir('charts/jugadores-app') {
+                        sh """
+                            helm upgrade --install ${APP_NAME} . \
+                                --namespace ${env.TARGET_ENVIRONMENT} \
+                                --set image.repository=${REGISTRY}/${APP_NAME} \
+                                --set image.tag=${env.IMAGE_TAG} \
+                                --set environment=${env.TARGET_ENVIRONMENT} \
+                                --atomic \
+                                --timeout 10m
                         """
                     }
                     
-                    env.IMAGE_TAG = imageTag
+                    echo "✅ Despliegue completado en ${env.TARGET_ENVIRONMENT}"
                 }
             }
         }
         
-        stage('Deploy') {
+        stage('Verify Deployment') {
             when {
                 expression { env.TARGET_ENVIRONMENT != 'none' }
             }
             steps {
-                echo "🚀 Desplegando ${APP_NAME} en ${env.TARGET_ENVIRONMENT}"
                 script {
+                    echo "🔍 Verificando despliegue..."
                     sh """
-                        helm upgrade --install ${APP_NAME} ./charts/jugadores-app \
-                            --namespace ${env.TARGET_ENVIRONMENT} \
-                            --set image.repository=${REGISTRY}/${APP_NAME} \
-                            --set image.tag=${env.IMAGE_TAG} \
-                            --set environment=${env.TARGET_ENVIRONMENT} \
-                            --atomic \
-                            --timeout 5m
-                    """
-                    
-                    sh """
-                        kubectl rollout status deployment/${APP_NAME} -n ${env.TARGET_ENVIRONMENT}
+                        kubectl rollout status deployment/${APP_NAME} -n ${env.TARGET_ENVIRONMENT} --timeout=300s
+                        kubectl get pods -n ${env.TARGET_ENVIRONMENT} -l app=${APP_NAME}
                     """
                 }
             }
@@ -100,10 +105,10 @@ pipeline {
     }
     post {
         success {
-            echo "🎉 Pipeline ${env.BRANCH_NAME} → ${env.TARGET_ENVIRONMENT} EXITOSO!"
+            echo "🎉 Pipeline EXITOSO! Aplicación desplegada en ${env.TARGET_ENVIRONMENT}"
         }
         failure {
-            echo "❌ Pipeline ${env.BRANCH_NAME} falló"
+            echo "❌ Pipeline FALLÓ"
         }
     }
 }
