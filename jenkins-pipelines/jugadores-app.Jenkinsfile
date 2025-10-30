@@ -25,7 +25,7 @@ spec:
     - name: DOCKER_HOST
       value: unix:///var/run/docker.sock
   - name: kubectl
-    image: bitnami/kubectl:1.27
+    image: bitnami/kubectl:latest
     command: ['cat']
     tty: true
     resources:
