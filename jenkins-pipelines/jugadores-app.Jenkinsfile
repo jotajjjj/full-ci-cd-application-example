@@ -53,10 +53,6 @@ spec:
         }
     }
     
-    triggers {
-        pollSCM('H/5 * * * *')  // Chequea cada 5 minutos
-    }
-    
     options {
         timeout(time: 30, unit: 'MINUTES')
     }
