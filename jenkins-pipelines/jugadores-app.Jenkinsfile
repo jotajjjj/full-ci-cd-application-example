@@ -36,7 +36,7 @@ spec:
         cpu: "200m"
         memory: "128Mi"
   - name: jnlp
-    image: jenkins/inbound-agent:jdk11
+    image: jenkins/inbound-agent:jdk17
     args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
     resources:
       requests:
