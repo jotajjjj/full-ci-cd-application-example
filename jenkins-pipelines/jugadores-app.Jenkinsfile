@@ -1,7 +1,7 @@
 pipeline {
     agent {
         kubernetes {
-            label "jenkins-agent-${UUID.randomUUID().toString()}"
+            // Eliminamos el label deprecated y usamos la definición directa del pod
             yaml '''
 apiVersion: v1
 kind: Pod
@@ -13,11 +13,11 @@ spec:
     tty: true
     resources:
       requests:
-        cpu: "100m"
-        memory: "128Mi"
+        cpu: "50m"
+        memory: "64Mi"
       limits:
-        cpu: "500m"
-        memory: "512Mi"
+        cpu: "300m"
+        memory: "256Mi"
     volumeMounts:
     - name: docker-sock
       mountPath: /var/run/docker.sock
@@ -25,26 +25,26 @@ spec:
     - name: DOCKER_HOST
       value: unix:///var/run/docker.sock
   - name: kubectl
-    image: alpine/k8s:1.27.3
+    image: bitnami/kubectl:1.27
     command: ['cat']
     tty: true
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        cpu: "200m"
+        memory: "128Mi"
+  - name: jnlp
+    image: jenkins/inbound-agent:jdk11
+    args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
     resources:
       requests:
         cpu: "100m"
         memory: "128Mi"
       limits:
-        cpu: "500m"
-        memory: "512Mi"
-  - name: jnlp
-    image: jenkins/inbound-agent:latest
-    args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
-    resources:
-      requests:
         cpu: "200m"
         memory: "256Mi"
-      limits:
-        cpu: "500m"
-        memory: "512Mi"
   volumes:
   - name: docker-sock
     hostPath:
@@ -55,6 +55,7 @@ spec:
     
     options {
         timeout(time: 30, unit: 'MINUTES')
+        retry(2) // Reintentar en caso de fallos temporales
     }
     
     environment {
@@ -70,20 +71,16 @@ spec:
             steps {
                 checkout scm
                 script {
-                    if (env.BRANCH_NAME == 'main') {
-                        env.TARGET_ENVIRONMENT = 'production'
-                        env.DEPLOY_NAMESPACE = 'production'
-                    } else if (env.BRANCH_NAME == 'staging') {
-                        env.TARGET_ENVIRONMENT = 'staging' 
-                        env.DEPLOY_NAMESPACE = 'staging'
-                    } else if (env.BRANCH_NAME == 'develop') {
-                        env.TARGET_ENVIRONMENT = 'dev'
-                        env.DEPLOY_NAMESPACE = 'dev'
-                    } else {
-                        env.TARGET_ENVIRONMENT = 'none'
-                    }
+                    // Definir entornos basados en ramas
+                    def branchEnvMap = [
+                        'main': 'production',
+                        'staging': 'staging', 
+                        'develop': 'dev'
+                    ]
                     
-                    env.IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
+                    env.TARGET_ENVIRONMENT = branchEnvMap.get(env.BRANCH_NAME, 'none')
+                    env.DEPLOY_NAMESPACE = branchEnvMap.get(env.BRANCH_NAME, 'none')
+                    env.IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}".replace('/', '-')
                     
                     echo "🎯 Configuración:"
                     echo "  Rama: ${env.BRANCH_NAME}"
@@ -106,13 +103,17 @@ spec:
                             dir('apps/jugadores-app') {
                                 sh """
                                     # Login a GitHub Container Registry
-                                    echo ${GITHUB_TOKEN} | docker login ghcr.io -u ${GITHUB_USER} --password-stdin
+                                    echo \$GITHUB_TOKEN | docker login ghcr.io -u ${GITHUB_USER} --password-stdin
                                     
-                                    # Construir imagen
-                                    docker build -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} .
+                                    # Construir imagen optimizando cache
+                                    docker build \
+                                        --tag ${env.IMAGE_NAME}:${env.IMAGE_TAG} \
+                                        --tag ${env.IMAGE_NAME}:latest \
+                                        .
                                     
                                     # Subir imagen
                                     docker push ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+                                    docker push ${env.IMAGE_NAME}:latest
                                     
                                     echo "✅ Imagen subida: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
                                 """
@@ -132,15 +133,14 @@ spec:
                     script {
                         echo "🚀 Desplegando en ${env.DEPLOY_NAMESPACE}..."
                         
-                        // Configurar kubeconfig desde el secret
                         withCredentials([file(credentialsId: env.KUBECONFIG_CREDENTIALS, variable: 'KUBECONFIG_FILE')]) {
                             sh """
                                 mkdir -p /root/.kube
-                                cp ${KUBECONFIG_FILE} /root/.kube/config
+                                cp \$KUBECONFIG_FILE /root/.kube/config
                                 chmod 600 /root/.kube/config
                                 
                                 # Crear namespace si no existe
-                                kubectl create namespace ${env.DEPLOY_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                                kubectl create namespace ${env.DEPLOY_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - || true
                                 
                                 # Aplicar deployment
                                 cat <<EOF | kubectl apply -f -
@@ -151,6 +151,7 @@ metadata:
   namespace: ${env.DEPLOY_NAMESPACE}
   labels:
     app: ${env.APP_NAME}
+    environment: ${env.TARGET_ENVIRONMENT}
 spec:
   replicas: 1
   selector:
@@ -160,15 +161,50 @@ spec:
     metadata:
       labels:
         app: ${env.APP_NAME}
+        environment: ${env.TARGET_ENVIRONMENT}
     spec:
       containers:
       - name: ${env.APP_NAME}
         image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
         ports:
-        - containerPort: 8080
+        - containerPort: 80
         env:
         - name: ENVIRONMENT
           value: ${env.TARGET_ENVIRONMENT}
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /health.json
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health.json
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${env.APP_NAME}-service
+  namespace: ${env.DEPLOY_NAMESPACE}
+  labels:
+    app: ${env.APP_NAME}
+spec:
+  selector:
+    app: ${env.APP_NAME}
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
 EOF
 
                                 # Esperar a que el rollout se complete
@@ -191,9 +227,16 @@ EOF
                         echo "🔍 Verificando despliegue..."
                         sh """
                             echo "=== Pods ==="
-                            kubectl get pods -n ${env.DEPLOY_NAMESPACE} -l app=${env.APP_NAME}
+                            kubectl get pods -n ${env.DEPLOY_NAMESPACE} -l app=${env.APP_NAME} -o wide
+                            
                             echo "=== Services ==="
                             kubectl get svc -n ${env.DEPLOY_NAMESPACE} -l app=${env.APP_NAME} || echo "No services found"
+                            
+                            echo "=== Deployment Status ==="
+                            kubectl get deployment/${env.APP_NAME} -n ${env.DEPLOY_NAMESPACE} -o wide
+                            
+                            echo "=== ReplicaSet ==="
+                            kubectl get replicaset -n ${env.DEPLOY_NAMESPACE} -l app=${env.APP_NAME}
                         """
                     }
                 }
@@ -202,11 +245,47 @@ EOF
     }
     
     post {
+        always {
+            echo "🧹 Limpiando recursos temporales..."
+            script {
+                if (env.TARGET_ENVIRONMENT != 'none') {
+                    container('kubectl') {
+                        withCredentials([file(credentialsId: env.KUBECONFIG_CREDENTIALS, variable: 'KUBECONFIG_FILE')]) {
+                            sh '''
+                                mkdir -p /root/.kube
+                                cp $KUBECONFIG_FILE /root/.kube/config
+                                chmod 600 /root/.kube/config
+                                
+                                # Limpiar configuraciones temporales
+                                rm -f /root/.kube/config
+                            '''
+                        }
+                    }
+                }
+            }
+        }
         success {
             echo "🎉 Pipeline EXITOSO! Aplicación desplegada en ${env.DEPLOY_NAMESPACE}"
         }
         failure {
             echo "❌ Pipeline FALLÓ"
+            // Opcional: Revertir deployment en caso de fallo
+            script {
+                if (env.TARGET_ENVIRONMENT != 'none') {
+                    container('kubectl') {
+                        withCredentials([file(credentialsId: env.KUBECONFIG_CREDENTIALS, variable: 'KUBECONFIG_FILE')]) {
+                            sh """
+                                mkdir -p /root/.kube
+                                cp \$KUBECONFIG_FILE /root/.kube/config
+                                chmod 600 /root/.kube/config
+                                
+                                echo "🔄 Revertiendo deployment debido a fallo..."
+                                kubectl rollout undo deployment/${env.APP_NAME} -n ${env.DEPLOY_NAMESPACE} || true
+                            """
+                        }
+                    }
+                }
+            }
         }
     }
 }
