@@ -65,7 +65,7 @@ spec:
         APP_NAME = 'jugadores-app'
         GITHUB_USER = 'jotajjjj'
         IMAGE_NAME = "ghcr.io/${GITHUB_USER}/${APP_NAME}"
-        GITHUB_CREDENTIALS = 'github-token'
+        GITHUB_CREDENTIALS = 'github-token-sistema'
         KUBECONFIG_CREDENTIALS = 'kubeconfig-secret'
     }
     
