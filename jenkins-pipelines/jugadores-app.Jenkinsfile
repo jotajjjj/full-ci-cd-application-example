@@ -11,6 +11,13 @@ spec:
     image: docker:24.0.7
     command: ['cat']
     tty: true
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
     volumeMounts:
     - name: docker-sock
       mountPath: /var/run/docker.sock
@@ -18,6 +25,23 @@ spec:
     image: bitnami/kubectl:1.28
     command: ['cat']
     tty: true
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+  - name: jnlp
+    image: jenkins/inbound-agent:latest
+    args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
   volumes:
   - name: docker-sock
     hostPath:
@@ -146,6 +170,7 @@ spec:
                                 echo "🆕 Creando nuevo deployment..."
                                 # Aquí puedes aplicar tu chart de Helm o YAML
                                 kubectl create deployment ${APP_NAME} --image=${IMAGE_NAME}:${IMAGE_TAG} -n ${DEPLOY_NAMESPACE}
+                                kubectl expose deployment ${APP_NAME} --port=8080 -n ${DEPLOY_NAMESPACE}
                             fi
                             
                             echo "✅ Despliegue completado en ${env.DEPLOY_NAMESPACE}"
@@ -185,19 +210,8 @@ spec:
         failure {
             echo "❌ Pipeline FALLÓ"
             script {
-                container('kubectl') {
-                    sh """
-                        echo "🔍 Debug information:"
-                        kubectl get events -n ${DEPLOY_NAMESPACE} --sort-by='.lastTimestamp' | tail -10 || true
-                        kubectl describe deployment/${APP_NAME} -n ${DEPLOY_NAMESPACE} || true
-                    """
-                }
+                echo "🔍 Revisa los logs anteriores para más detalles"
             }
-        }
-        always {
-            echo "🏁 Pipeline finalizado"
-            // Limpiar credenciales temporales
-            sh 'rm -f /root/.kube/config || true'
         }
     }
 }
