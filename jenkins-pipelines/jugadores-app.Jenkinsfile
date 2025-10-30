@@ -45,6 +45,9 @@ spec:
       limits:
         cpu: "200m"
         memory: "256Mi"
+    env:
+      - name: JENKINS_URL
+        value: "http://jenkins-service.devops-tools.svc.cluster.local:8080/"
   volumes:
   - name: docker-sock
     hostPath:
