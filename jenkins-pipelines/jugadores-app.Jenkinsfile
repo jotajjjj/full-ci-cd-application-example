@@ -21,8 +21,11 @@ spec:
     volumeMounts:
     - name: docker-sock
       mountPath: /var/run/docker.sock
+    env:
+    - name: DOCKER_HOST
+      value: unix:///var/run/docker.sock
   - name: kubectl
-    image: bitnami/kubectl:1.28
+    image: bitnami/kubectl:1.27
     command: ['cat']
     tty: true
     resources:
@@ -48,6 +51,10 @@ spec:
       path: /var/run/docker.sock
 '''
         }
+    }
+    
+    triggers {
+        pollSCM('H/5 * * * *')  // Chequea cada 5 minutos
     }
     
     options {
@@ -160,19 +167,52 @@ spec:
                     script {
                         echo "🚀 Desplegando en ${env.DEPLOY_NAMESPACE}..."
                         
-                        // Verificar si el deployment existe, si no crearlo
+                        // Usar un approach más simple y robusto
                         sh """
-                            if kubectl get deployment ${APP_NAME} -n ${DEPLOY_NAMESPACE} >/dev/null 2>&1; then
-                                echo "📦 Actualizando deployment existente..."
-                                kubectl set image deployment/${APP_NAME} ${APP_NAME}=${IMAGE_NAME}:${IMAGE_TAG} -n ${DEPLOY_NAMESPACE}
-                                kubectl rollout status deployment/${APP_NAME} -n ${DEPLOY_NAMESPACE} --timeout=300s
-                            else
-                                echo "🆕 Creando nuevo deployment..."
-                                # Aquí puedes aplicar tu chart de Helm o YAML
-                                kubectl create deployment ${APP_NAME} --image=${IMAGE_NAME}:${IMAGE_TAG} -n ${DEPLOY_NAMESPACE}
-                                kubectl expose deployment ${APP_NAME} --port=8080 -n ${DEPLOY_NAMESPACE}
-                            fi
-                            
+                            # Aplicar deployment básico
+                            cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${APP_NAME}
+  namespace: ${DEPLOY_NAMESPACE}
+  labels:
+    app: ${APP_NAME}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${APP_NAME}
+  template:
+    metadata:
+      labels:
+        app: ${APP_NAME}
+    spec:
+      containers:
+      - name: ${APP_NAME}
+        image: ${IMAGE_NAME}:${IMAGE_TAG}
+        ports:
+        - containerPort: 8080
+        env:
+        - name: ENVIRONMENT
+          value: ${TARGET_ENVIRONMENT}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${APP_NAME}
+  namespace: ${DEPLOY_NAMESPACE}
+spec:
+  selector:
+    app: ${APP_NAME}
+  ports:
+  - port: 80
+    targetPort: 8080
+  type: ClusterIP
+EOF
+
+                            # Esperar a que el rollout se complete
+                            kubectl rollout status deployment/${APP_NAME} -n ${DEPLOY_NAMESPACE} --timeout=300s
                             echo "✅ Despliegue completado en ${env.DEPLOY_NAMESPACE}"
                         """
                     }
@@ -192,7 +232,7 @@ spec:
                             echo "=== Pods ==="
                             kubectl get pods -n ${DEPLOY_NAMESPACE} -l app=${APP_NAME}
                             echo "=== Services ==="
-                            kubectl get svc -n ${DEPLOY_NAMESPACE} -l app=${APP_NAME} || echo "No services found"
+                            kubectl get svc -n ${DEPLOY_NAMESPACE} -l app=${APP_NAME}
                             echo "=== Deployments ==="
                             kubectl get deployments -n ${DEPLOY_NAMESPACE} -l app=${APP_NAME}
                         """
