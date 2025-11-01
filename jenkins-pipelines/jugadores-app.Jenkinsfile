@@ -102,7 +102,7 @@ spec:
                 container('docker') {
                     script {
                         echo "🐳 Construyendo imagen Docker..."
-                        withCredentials([string(credentialsId: 'github-token-sistema', variable: 'GITHUB_TOKEN')]) {
+                        withCredentials([string(credentialsId: 'ghrc-token', variable: 'GITHUB_TOKEN')]) {
                             dir('apps/jugadores-app') {
                                 sh """
                                     # Login a GitHub Container Registry
