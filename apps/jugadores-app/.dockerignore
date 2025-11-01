@@ -55,7 +55,7 @@ coverage/
 .nyc_output/
 
 # Archivos específicos de Ionic
-ionic.config.json
+#ionic.config.json
 ionic.starter.json
 
 # Archivos específicos de Capacitor
