@@ -8,8 +8,7 @@ spec:
   containers:
   - name: kaniko
     image: gcr.io/kaniko-project/executor:latest
-    command: ["/kaniko/executor"]
-    args: ["--help"]
+    command: ["/busybox/cat"]
     tty: true
     resources:
       requests:
@@ -92,7 +91,8 @@ spec:
                             --context ${WORKSPACE} \
                             --dockerfile ${WORKSPACE}/Dockerfile \
                             --destination ${REGISTRY}:${IMAGE_TAG} \
-                            --cleanup
+                            --cleanup \
+                            --skip-tls-verify
                         '''
                     }
                 }
