@@ -59,14 +59,14 @@ spec:
             steps {
                 container('kaniko') {
                     withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
-                        sh """
+                        sh '''
                             mkdir -p /kaniko/.docker
-                            echo '{"auths":{"ghcr.io":{"auth":"$(echo -n jotajjj:${GITHUB_TOKEN} | base64 -w 0)"}}}' > /kaniko/.docker/config.json
+                            echo "{\"auths\":{\"ghcr.io\":{\"auth\":\"$(echo -n jotajjj:${GITHUB_TOKEN} | base64 -w 0)\"}}}" > /kaniko/.docker/config.json
                             /kaniko/executor \
                                 --context=${GIT_REPO} \
                                 --destination=${REGISTRY}/${IMAGE_NAME}:latest \
                                 --cleanup
-                        """
+                        '''
                     }
                 }
             }
@@ -76,12 +76,12 @@ spec:
             steps {
                 container('kubectl') {
                     withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
-                        sh """
-                            mkdir -p \$HOME/.kube
-                            cp \$KUBECONFIG_FILE \$HOME/.kube/config
+                        sh '''
+                            mkdir -p $HOME/.kube
+                            cp $KUBECONFIG_FILE $HOME/.kube/config
                             kubectl apply -f k8s/deployment.yaml
                             kubectl apply -f k8s/service.yaml
-                        """
+                        '''
                     }
                 }
             }
