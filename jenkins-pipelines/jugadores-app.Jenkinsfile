@@ -13,8 +13,10 @@ spec:
   - name: kaniko
     image: gcr.io/kaniko-project/executor:latest
     command:
-    - cat
-    tty: true
+    - /busybox/sh
+    args:
+    - -c
+    - sleep 99d
     resources:
       requests:
         cpu: "500m"
@@ -25,8 +27,10 @@ spec:
   - name: kubectl
     image: bitnami/kubectl:latest
     command:
-    - cat
-    tty: true
+    - /bin/sh
+    args:
+    - -c
+    - sleep 99d
     resources:
       requests:
         cpu: "200m"
