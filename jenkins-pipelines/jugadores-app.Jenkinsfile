@@ -23,9 +23,7 @@ spec:
     - name: kaniko
       image: gcr.io/kaniko-project/executor:latest
       command:
-        - /bin/sh
-        - -c
-        - "sleep 9999999"
+        - /busybox/cat
       tty: true
       resources:
         requests:
@@ -37,10 +35,13 @@ spec:
       volumeMounts:
         - name: docker-config
           mountPath: /kaniko/.docker/
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
 
     - name: kubectl
       image: bitnami/kubectl:latest
-      command: ["cat"]
+      command: ["sleep"]
+      args: ["infinity"]
       tty: true
       resources:
         requests:
@@ -52,6 +53,8 @@ spec:
 
   volumes:
     - name: docker-config
+      emptyDir: {}
+    - name: workspace-volume
       emptyDir: {}
 """
         }
@@ -65,23 +68,24 @@ spec:
     stages {
         stage('Prepare Docker Auth') {
             steps {
-                container('kaniko') {
+                container('jnlp') {
                     withCredentials([string(credentialsId: 'ghcr-token', variable: 'GHCR_TOKEN')]) {
                         sh '''
                             echo "🔑 Configurando autenticación para GHCR..."
-                            mkdir -p /kaniko/.docker
+                            mkdir -p /home/jenkins/agent/.docker
                             # Crear config.json para Docker/kaniko
-                            cat > /kaniko/.docker/config.json << EOF
+                            cat > /home/jenkins/agent/.docker/config.json << EOF
 {
   "auths": {
     "ghcr.io": {
-      "auth": "$(echo -n "jotajjj:$GHCR_TOKEN" | base64 | tr -d '\n')"
+      "auth": "$(echo -n "jotajjj:$GHCR_TOKEN" | base64 -w 0)"
     }
   }
 }
 EOF
-                            echo "✅ Docker config.json creado en /kaniko/.docker/"
-                            cat /kaniko/.docker/config.json
+                            echo "✅ Docker config.json creado"
+                            # Copiar configuración al volumen de kaniko
+                            cp /home/jenkins/agent/.docker/config.json /kaniko/.docker/
                         '''
                     }
                 }
@@ -95,8 +99,8 @@ EOF
                         echo "🚀 Construyendo y subiendo la imagen con Kaniko..."
                         sh """
                             /kaniko/executor \
-                                --context=`pwd` \
-                                --dockerfile=`pwd`/Dockerfile \
+                                --context=/home/jenkins/agent/workspace/ \
+                                --dockerfile=/home/jenkins/agent/workspace/Dockerfile \
                                 --destination=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} \
                                 --cache=true \
                                 --cleanup
@@ -111,7 +115,6 @@ EOF
                 container('kubectl') {
                     script {
                         echo "📦 Desplegando nueva versión en Kubernetes..."
-                        // Configurar kubeconfig primero
                         withCredentials([file(credentialsId: 'kubeconfig-secret', variable: 'KUBECONFIG_FILE')]) {
                             sh """
                                 mkdir -p /root/.kube
