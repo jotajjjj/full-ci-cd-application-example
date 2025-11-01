@@ -7,23 +7,22 @@ apiVersion: v1
 kind: Pod
 spec:
   containers:
-  - name: docker
-    image: docker:24.0.7
-    command: ['cat']
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:latest
+    command: ['sleep']
+    args: ['infinity']
     tty: true
     resources:
       requests:
-        cpu: "50m"
-        memory: "64Mi"
+        cpu: "100m"
+        memory: "128Mi"
       limits:
-        cpu: "300m"
-        memory: "256Mi"
+        cpu: "500m"
+        memory: "512Mi"
     volumeMounts:
-    - name: docker-sock
-      mountPath: /var/run/docker.sock
-    env:
-    - name: DOCKER_HOST
-      value: unix:///var/run/docker.sock
+    - name: workspace-volume
+      mountPath: /home/jenkins/agent
+
   - name: kubectl
     image: bitnami/kubectl:latest
     command: ['cat']
@@ -35,9 +34,13 @@ spec:
       limits:
         cpu: "200m"
         memory: "128Mi"
+    volumeMounts:
+    - name: workspace-volume
+      mountPath: /home/jenkins/agent
+
   - name: jnlp
     image: jenkins/inbound-agent:jdk17
-    args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
+    args: ['$(JENKINS_SECRET)', '$(JENKINS_NAME)']
     resources:
       requests:
         cpu: "100m"
@@ -46,12 +49,13 @@ spec:
         cpu: "200m"
         memory: "256Mi"
     env:
-      - name: JENKINS_URL
-        value: "http://jenkins-service.devops-tools.svc.cluster.local:8080/"
+    - name: JENKINS_URL
+      value: "http://jenkins-service.devops-tools.svc.cluster.local:8080/"
+
   volumes:
-  - name: docker-sock
-    hostPath:
-      path: /var/run/docker.sock
+  - name: workspace-volume
+    emptyDir: {}
+
 '''
         }
     }
@@ -95,37 +99,34 @@ spec:
         }
         
         stage('Build Docker Image') {
-            when {
-                expression { env.TARGET_ENVIRONMENT != 'none' }
-            }
-            steps {
-                container('docker') {
-                    script {
-                        echo "🐳 Construyendo imagen Docker..."
-                        withCredentials([string(credentialsId: 'ghrc-token', variable: 'GITHUB_TOKEN')]) {
-                            dir('apps/jugadores-app') {
-                                sh """
-                                    # Login a GitHub Container Registry
-                                    echo \$GITHUB_TOKEN | docker login ghcr.io -u ${GITHUB_USER} --password-stdin
-                                    
-                                    # Construir imagen optimizando cache
-                                    docker build \
-                                        --tag ${env.IMAGE_NAME}:${env.IMAGE_TAG} \
-                                        --tag ${env.IMAGE_NAME}:latest \
-                                        .
-                                    
-                                    # Subir imagen
-                                    docker push ${env.IMAGE_NAME}:${env.IMAGE_TAG}
-                                    docker push ${env.IMAGE_NAME}:latest
-                                    
-                                    echo "✅ Imagen subida: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                                """
-                            }
-                        }
+    when {
+        expression { env.TARGET_ENVIRONMENT != 'none' }
+    }
+    steps {
+        container('kubectl') { // usamos kubectl para tener herramientas y acceso
+            script {
+                echo "🐳 Construyendo imagen con Kaniko..."
+
+                withCredentials([string(credentialsId: 'ghrc-token', variable: 'GITHUB_TOKEN')]) {
+                    dir('apps/jugadores-app') {
+                        sh """
+                            mkdir -p /kaniko/.docker
+                            echo '{"auths":{"ghcr.io":{"auth":"$(echo -n ${GITHUB_USER}:${GITHUB_TOKEN} | base64)"}}}' > /kaniko/.docker/config.json
+
+                            /kaniko/executor \
+                                --context `pwd` \
+                                --dockerfile Dockerfile \
+                                --destination ${env.IMAGE_NAME}:${env.IMAGE_TAG} \
+                                --destination ${env.IMAGE_NAME}:latest \
+                                --single-snapshot
+                        """
                     }
                 }
             }
         }
+    }
+}
+
         
         stage('Deploy to Environment') {
             when {
