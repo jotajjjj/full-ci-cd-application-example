@@ -25,7 +25,7 @@ spec:
       volumeMounts:
         - name: workspace-volume
           mountPath: /home/jenkins/agent
-        - name: docker-config  # ← MONTAR EN JNLP TAMBIÉN
+        - name: docker-config
           mountPath: /kaniko/.docker
 
     - name: kaniko
@@ -83,7 +83,6 @@ spec:
                         sh '''
                             echo "🔑 Configurando autenticación para GHCR..."
                             mkdir -p /kaniko/.docker
-                            # Crear config.json para Docker/kaniko
                             cat > /kaniko/.docker/config.json << EOF
 {
   "auths": {
@@ -101,16 +100,34 @@ EOF
             }
         }
 
+        stage('Verify Workspace') {
+            steps {
+                container('jnlp') {
+                    sh '''
+                        echo "📁 Contenido del workspace:"
+                        pwd
+                        ls -la
+                        echo "🔍 Verificando Dockerfile:"
+                        ls -la Dockerfile || echo "❌ Dockerfile no encontrado"
+                        find . -name "Dockerfile" -type f
+                    '''
+                }
+            }
+        }
+
         stage('Build & Push Docker Image') {
             steps {
                 container('kaniko') {
                     script {
                         echo "🚀 Construyendo y subiendo la imagen con Kaniko..."
                         sh """
-                            ls -la /kaniko/.docker/
+                            echo "📂 Contenido del workspace en Kaniko:"
+                            pwd
+                            ls -la
+                            
                             /kaniko/executor \\
-                                --context=/home/jenkins/agent/workspace/ \\
-                                --dockerfile=/home/jenkins/agent/workspace/Dockerfile \\
+                                --context=dir:///home/jenkins/agent/workspace/ranch_para_app_jugadores_develop/ \\
+                                --dockerfile=/home/jenkins/agent/workspace/ranch_para_app_jugadores_develop/Dockerfile \\
                                 --destination=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} \\
                                 --cache=true \\
                                 --cleanup
