@@ -93,24 +93,8 @@ spec:
 }
 EOF
                             echo "✅ Docker config.json creado en /kaniko/.docker/"
-                            ls -la /kaniko/.docker/
                         '''
                     }
-                }
-            }
-        }
-
-        stage('Verify Workspace') {
-            steps {
-                container('jnlp') {
-                    sh '''
-                        echo "📁 Contenido del workspace:"
-                        pwd
-                        ls -la
-                        echo "🔍 Verificando Dockerfile:"
-                        ls -la Dockerfile || echo "❌ Dockerfile no encontrado"
-                        find . -name "Dockerfile" -type f
-                    '''
                 }
             }
         }
@@ -121,13 +105,12 @@ EOF
                     script {
                         echo "🚀 Construyendo y subiendo la imagen con Kaniko..."
                         sh """
-                            echo "📂 Contenido del workspace en Kaniko:"
-                            pwd
-                            ls -la
+                            echo "📂 Verificando contenido de la aplicación:"
+                            ls -la /home/jenkins/agent/workspace/ranch_para_app_jugadores_develop/apps/jugadores-app/
                             
                             /kaniko/executor \\
-                                --context=dir:///home/jenkins/agent/workspace/ranch_para_app_jugadores_develop/ \\
-                                --dockerfile=/home/jenkins/agent/workspace/ranch_para_app_jugadores_develop/Dockerfile \\
+                                --context=/home/jenkins/agent/workspace/ranch_para_app_jugadores_develop/apps/jugadores-app/ \\
+                                --dockerfile=/home/jenkins/agent/workspace/ranch_para_app_jugadores_develop/apps/jugadores-app/Dockerfile \\
                                 --destination=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} \\
                                 --cache=true \\
                                 --cleanup
@@ -148,10 +131,7 @@ EOF
                                 cp ${KUBECONFIG_FILE} /root/.kube/config
                                 chmod 600 /root/.kube/config
                                 
-                                # Verificar conexión
                                 kubectl cluster-info
-                                
-                                # Actualizar despliegue
                                 kubectl set image deployment/jugadores-app jugadores-app=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} -n devops-tools || true
                                 kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
                             """
