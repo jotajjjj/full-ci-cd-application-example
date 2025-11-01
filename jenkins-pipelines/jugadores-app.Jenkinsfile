@@ -103,23 +103,22 @@ spec:
         expression { env.TARGET_ENVIRONMENT != 'none' }
     }
     steps {
-        container('kubectl') { // usamos kubectl para tener herramientas y acceso
+        container('kaniko') {
             script {
-                echo "🐳 Construyendo imagen con Kaniko..."
-
+                echo "🐳 Construyendo imagen Docker con Kaniko..."
                 withCredentials([string(credentialsId: 'ghrc-token', variable: 'GITHUB_TOKEN')]) {
                     dir('apps/jugadores-app') {
-                        sh """
+                        sh '''
                             mkdir -p /kaniko/.docker
-                            echo '{"auths":{"ghcr.io":{"auth":"$(echo -n ${GITHUB_USER}:${GITHUB_TOKEN} | base64)"}}}' > /kaniko/.docker/config.json
+                            echo "{\"auths\":{\"ghcr.io\":{\"auth\":\"$(echo -n ${GITHUB_USER}:${GITHUB_TOKEN} | base64)\"}}}" > /kaniko/.docker/config.json
 
                             /kaniko/executor \
                                 --context `pwd` \
                                 --dockerfile Dockerfile \
-                                --destination ${env.IMAGE_NAME}:${env.IMAGE_TAG} \
-                                --destination ${env.IMAGE_NAME}:latest \
+                                --destination ${IMAGE_NAME}:${IMAGE_TAG} \
+                                --destination ${IMAGE_NAME}:latest \
                                 --single-snapshot
-                        """
+                        '''
                     }
                 }
             }
