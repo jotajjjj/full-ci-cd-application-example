@@ -1,100 +1,79 @@
 pipeline {
     agent {
         kubernetes {
-            yaml '''
+            cloud 'docker-cloud'
+            namespace 'devops-tools'
+            serviceAccount 'jenkins'
+            yaml """
 apiVersion: v1
 kind: Pod
 spec:
   containers:
-  - name: kaniko
-    image: gcr.io/kaniko-project/executor:latest
-    command: ["/busybox/cat"]
-    tty: true
-    resources:
-      requests:
-        cpu: "100m"
-        memory: "128Mi"
-      limits:
-        cpu: "500m"
-        memory: "512Mi"
-    volumeMounts:
-    - name: workspace-volume
-      mountPath: /home/jenkins/agent
-
-  - name: kubectl
-    image: bitnami/kubectl:latest
-    command: ["/bin/sh", "-c"]
-    args: ["cat"]
-    tty: true
-    resources:
-      requests:
-        cpu: "50m"
-        memory: "64Mi"
-      limits:
-        cpu: "200m"
-        memory: "128Mi"
-    volumeMounts:
-    - name: workspace-volume
-      mountPath: /home/jenkins/agent
-
-  - name: jnlp
-    image: jenkins/inbound-agent:jdk17
-    args: ['$(JENKINS_SECRET)', '$(JENKINS_NAME)']
-    resources:
-      requests:
-        cpu: "100m"
-        memory: "128Mi"
-      limits:
-        cpu: "200m"
-        memory: "256Mi"
-    env:
-    - name: JENKINS_URL
-      value: "http://jenkins-service.devops-tools.svc.cluster.local:8080/"
-
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+      tty: true
+      command:
+        - cat
+      env:
+        - name: DOCKER_CONFIG
+          value: /kaniko/.docker/
+      volumeMounts:
+        - name: docker-config
+          mountPath: /kaniko/.docker/
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
+    - name: kubectl
+      image: bitnami/kubectl:latest
+      tty: true
+      command:
+        - cat
+      volumeMounts:
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
   volumes:
-  - name: workspace-volume
-    emptyDir: {}
-'''
+    - name: docker-config
+      secret:
+        secretName: ghcr-secret
+    - name: workspace-volume
+      persistentVolumeClaim:
+        claimName: jenkins-pv-claim
+"""
         }
     }
 
     environment {
-        REGISTRY = "jotajjjj/jugadoresapp"
-        IMAGE_TAG = "latest"
+        REGISTRY = "ghcr.io"
+        USERNAME = "jotajjj"
+        IMAGE_NAME = "jugadores-app"
+        TAG = "latest"
+        GITHUB_TOKEN = credentials('ghcr-token') // secret text en Jenkins
     }
 
     stages {
         stage('Checkout') {
             steps {
-                script {
-                    withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
-                        checkout([
-                            $class: 'GitSCM',
-                            branches: [[name: "*/${env.BRANCH_NAME}"]],
-                            userRemoteConfigs: [[
-                                url: 'https://github.com/jotajjjj/jugadores-app.git',
-                                credentialsId: 'github-token'
-                            ]]
-                        ])
-                    }
-                }
+                git branch: 'develop',
+                    url: 'https://github.com/jotajjj/jugadores-app.git',
+                    credentialsId: 'ghcr-token'
             }
         }
 
-        stage('Build Docker Image with Kaniko') {
+        stage('Build Docker image with Kaniko') {
             steps {
                 container('kaniko') {
-                    withCredentials([string(credentialsId: 'dockerhub-token', variable: 'DOCKERHUB_TOKEN')]) {
-                        sh '''
-                        echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"$(echo -n jotajjjj:${DOCKERHUB_TOKEN} | base64)\"}}}" > /kaniko/.docker/config.json
+                    sh '''
+                        echo "🔧 Building image for GitHub Container Registry..."
+                        if [ ! -x /busybox/cat ]; then
+                          echo "⚠️ /busybox/cat not found, using /bin/sh fallback"
+                          ln -s /bin/sh /busybox/cat || true
+                        fi
+
                         /kaniko/executor \
-                            --context ${WORKSPACE} \
-                            --dockerfile ${WORKSPACE}/Dockerfile \
-                            --destination ${REGISTRY}:${IMAGE_TAG} \
-                            --cleanup \
-                            --skip-tls-verify
-                        '''
-                    }
+                          --context $WORKSPACE \
+                          --dockerfile $WORKSPACE/Dockerfile \
+                          --destination $REGISTRY/$USERNAME/$IMAGE_NAME:$TAG \
+                          --cleanup
+                    '''
                 }
             }
         }
@@ -102,13 +81,11 @@ spec:
         stage('Deploy to Kubernetes') {
             steps {
                 container('kubectl') {
-                    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-                        sh '''
-                        kubectl config use-context minikube
-                        kubectl rollout restart deployment jugadores-deployment -n devops-tools
-                        kubectl get pods -n devops-tools
-                        '''
-                    }
+                    sh '''
+                        echo "🚀 Deploying to Kubernetes..."
+                        kubectl apply -f k8s/deployment.yaml
+                        kubectl rollout status deployment jugadores-app
+                    '''
                 }
             }
         }
@@ -116,10 +93,10 @@ spec:
 
     post {
         success {
-            echo '✅ Pipeline ejecutado con éxito.'
+            echo "✅ Pipeline completed successfully"
         }
         failure {
-            echo '❌ Falló el pipeline. Revisa los logs.'
+            echo "❌ Pipeline failed"
         }
     }
 }
