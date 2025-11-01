@@ -22,6 +22,11 @@ spec:
         limits:
           cpu: "200m"
           memory: "256Mi"
+      volumeMounts:
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
+        - name: docker-config  # ← MONTAR EN JNLP TAMBIÉN
+          mountPath: /kaniko/.docker
 
     - name: kaniko
       image: gcr.io/kaniko-project/executor:debug
@@ -36,7 +41,9 @@ spec:
           memory: "1Gi"
       volumeMounts:
         - name: docker-config
-          mountPath: /kaniko/.docker/
+          mountPath: /kaniko/.docker
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
 
     - name: kubectl
       image: bitnami/kubectl:latest
@@ -50,9 +57,14 @@ spec:
         limits:
           cpu: "500m"
           memory: "512Mi"
+      volumeMounts:
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
 
   volumes:
     - name: docker-config
+      emptyDir: {}
+    - name: workspace-volume
       emptyDir: {}
 """
         }
@@ -70,8 +82,9 @@ spec:
                     withCredentials([string(credentialsId: 'ghcr-token', variable: 'GHCR_TOKEN')]) {
                         sh '''
                             echo "🔑 Configurando autenticación para GHCR..."
-                            mkdir -p /home/jenkins/agent/.docker
-                            cat > /home/jenkins/agent/.docker/config.json << EOF
+                            mkdir -p /kaniko/.docker
+                            # Crear config.json para Docker/kaniko
+                            cat > /kaniko/.docker/config.json << EOF
 {
   "auths": {
     "ghcr.io": {
@@ -80,42 +93,52 @@ spec:
   }
 }
 EOF
-                            echo "✅ Docker config creado"
-                            cp /home/jenkins/agent/.docker/config.json /kaniko/.docker/
+                            echo "✅ Docker config.json creado en /kaniko/.docker/"
+                            ls -la /kaniko/.docker/
                         '''
                     }
                 }
             }
         }
 
-        stage('Build & Push') {
+        stage('Build & Push Docker Image') {
             steps {
                 container('kaniko') {
-                    sh """
-                        /kaniko/executor \\
-                            --context=/home/jenkins/agent/workspace/ \\
-                            --dockerfile=/home/jenkins/agent/workspace/Dockerfile \\
-                            --destination=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} \\
-                            --cache=true \\
-                            --cleanup
-                    """
+                    script {
+                        echo "🚀 Construyendo y subiendo la imagen con Kaniko..."
+                        sh """
+                            ls -la /kaniko/.docker/
+                            /kaniko/executor \\
+                                --context=/home/jenkins/agent/workspace/ \\
+                                --dockerfile=/home/jenkins/agent/workspace/Dockerfile \\
+                                --destination=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} \\
+                                --cache=true \\
+                                --cleanup
+                        """
+                    }
                 }
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy to Kubernetes') {
             steps {
                 container('kubectl') {
-                    withCredentials([file(credentialsId: 'kubeconfig-secret', variable: 'KUBECONFIG_FILE')]) {
-                        sh """
-                            mkdir -p /root/.kube
-                            cp ${KUBECONFIG_FILE} /root/.kube/config
-                            chmod 600 /root/.kube/config
-                            
-                            kubectl cluster-info
-                            kubectl set image deployment/jugadores-app jugadores-app=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} -n devops-tools || true
-                            kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
-                        """
+                    script {
+                        echo "📦 Desplegando nueva versión en Kubernetes..."
+                        withCredentials([file(credentialsId: 'kubeconfig-secret', variable: 'KUBECONFIG_FILE')]) {
+                            sh """
+                                mkdir -p /root/.kube
+                                cp ${KUBECONFIG_FILE} /root/.kube/config
+                                chmod 600 /root/.kube/config
+                                
+                                # Verificar conexión
+                                kubectl cluster-info
+                                
+                                # Actualizar despliegue
+                                kubectl set image deployment/jugadores-app jugadores-app=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} -n devops-tools || true
+                                kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
+                            """
+                        }
                     }
                 }
             }
@@ -124,10 +147,11 @@ EOF
 
     post {
         success {
-            echo "✅ Pipeline completado: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
+            echo "✅ Pipeline completado con éxito."
+            echo "📦 Imagen: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
         }
         failure {
-            echo "❌ Error en el pipeline"
+            echo "❌ Error durante la ejecución del pipeline."
         }
     }
 }
