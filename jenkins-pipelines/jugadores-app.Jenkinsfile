@@ -23,7 +23,7 @@ spec:
     - name: kaniko
       image: gcr.io/kaniko-project/executor:latest
       command:
-        - /busybox/sh
+        - /bin/sh
         - -c
         - "sleep 9999999"
       tty: true
@@ -59,7 +59,7 @@ spec:
 
     environment {
         DOCKER_IMAGE = "ghcr.io/jotajjj/jugadores-app"
-        DOCKER_TAG = "latest"
+        DOCKER_TAG = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
     }
 
     stages {
@@ -70,14 +70,18 @@ spec:
                         sh '''
                             echo "🔑 Configurando autenticación para GHCR..."
                             mkdir -p /kaniko/.docker
-                            echo "{
-                              \\"auths\\": {
-                                \\"ghcr.io\\": {
-                                  \\"auth\\": \\"$(echo -n jotajjj:$GHCR_TOKEN | base64 -w 0)\\"
-                                }
-                              }
-                            }" > /kaniko/.docker/config.json
+                            # Crear config.json para Docker/kaniko
+                            cat > /kaniko/.docker/config.json << EOF
+{
+  "auths": {
+    "ghcr.io": {
+      "auth": "$(echo -n "jotajjj:$GHCR_TOKEN" | base64 | tr -d '\n')"
+    }
+  }
+}
+EOF
                             echo "✅ Docker config.json creado en /kaniko/.docker/"
+                            cat /kaniko/.docker/config.json
                         '''
                     }
                 }
@@ -87,14 +91,17 @@ spec:
         stage('Build & Push Docker Image') {
             steps {
                 container('kaniko') {
-                    sh '''
+                    script {
                         echo "🚀 Construyendo y subiendo la imagen con Kaniko..."
-                        /kaniko/executor \
-                            --context `pwd` \
-                            --dockerfile `pwd`/Dockerfile \
-                            --destination=${DOCKER_IMAGE}:${DOCKER_TAG} \
-                            --cleanup
-                    '''
+                        sh """
+                            /kaniko/executor \
+                                --context=`pwd` \
+                                --dockerfile=`pwd`/Dockerfile \
+                                --destination=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} \
+                                --cache=true \
+                                --cleanup
+                        """
+                    }
                 }
             }
         }
@@ -102,11 +109,24 @@ spec:
         stage('Deploy to Kubernetes') {
             steps {
                 container('kubectl') {
-                    sh '''
+                    script {
                         echo "📦 Desplegando nueva versión en Kubernetes..."
-                        kubectl set image deployment/jugadores-app jugadores-app=${DOCKER_IMAGE}:${DOCKER_TAG} -n devops-tools || true
-                        kubectl rollout status deployment/jugadores-app -n devops-tools
-                    '''
+                        // Configurar kubeconfig primero
+                        withCredentials([file(credentialsId: 'kubeconfig-secret', variable: 'KUBECONFIG_FILE')]) {
+                            sh """
+                                mkdir -p /root/.kube
+                                cp ${KUBECONFIG_FILE} /root/.kube/config
+                                chmod 600 /root/.kube/config
+                                
+                                # Verificar conexión
+                                kubectl cluster-info
+                                
+                                # Actualizar despliegue
+                                kubectl set image deployment/jugadores-app jugadores-app=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} -n devops-tools || true
+                                kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
+                            """
+                        }
+                    }
                 }
             }
         }
@@ -114,10 +134,11 @@ spec:
 
     post {
         success {
-            echo '✅ Pipeline completado con éxito.'
+            echo "✅ Pipeline completado con éxito."
+            echo "📦 Imagen: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
         }
         failure {
-            echo '❌ Error durante la ejecución del pipeline.'
+            echo "❌ Error durante la ejecución del pipeline."
         }
     }
 }
