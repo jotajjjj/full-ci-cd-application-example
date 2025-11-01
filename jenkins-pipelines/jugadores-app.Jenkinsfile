@@ -13,10 +13,9 @@ spec:
   - name: kaniko
     image: gcr.io/kaniko-project/executor:latest
     command:
-    - /busybox/sh
+    - /kaniko/executor
     args:
-    - -c
-    - sleep 99d
+    - --help
     resources:
       requests:
         cpu: "500m"
@@ -55,7 +54,6 @@ spec:
         REGISTRY = "ghcr.io/jotajjj"
         IMAGE_NAME = "jugadores-app"
         GIT_REPO = "https://github.com/jotajjj/jugadores-app"
-        DOCKER_CONFIG = "/kaniko/.docker/"
     }
 
     stages {
@@ -64,12 +62,16 @@ spec:
                 container('kaniko') {
                     withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
                         sh '''
-                            mkdir -p /kaniko/.docker
-                            echo "{\"auths\":{\"ghcr.io\":{\"auth\":\"$(echo -n jotajjj:${GITHUB_TOKEN} | base64 -w 0)\"}}}" > /kaniko/.docker/config.json
                             /kaniko/executor \
-                                --context=${GIT_REPO} \
-                                --destination=${REGISTRY}/${IMAGE_NAME}:latest \
-                                --cleanup
+                              --context ${GIT_REPO} \
+                              --destination ${REGISTRY}/${IMAGE_NAME}:latest \
+                              --dockerfile Dockerfile \
+                              --destination ${REGISTRY}/${IMAGE_NAME}:$(git rev-parse --short HEAD) \
+                              --cleanup \
+                              --single-snapshot \
+                              --skip-tls-verify \
+                              --verbosity=debug \
+                              --build-arg GITHUB_TOKEN=${GITHUB_TOKEN}
                         '''
                     }
                 }
