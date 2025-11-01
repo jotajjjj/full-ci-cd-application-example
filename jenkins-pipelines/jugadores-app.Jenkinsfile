@@ -10,19 +10,43 @@ metadata:
 spec:
   serviceAccountName: jenkins
   containers:
+    - name: jnlp
+      image: jenkins/inbound-agent:latest
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+
     - name: kaniko
       image: gcr.io/kaniko-project/executor:latest
-      command:
-        - cat
+      command: ["cat"]
       tty: true
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "512Mi"
+        limits:
+          cpu: "1000m"
+          memory: "1Gi"
       volumeMounts:
         - name: docker-config
           mountPath: /kaniko/.docker/
+
     - name: kubectl
       image: bitnami/kubectl:latest
-      command:
-        - cat
+      command: ["cat"]
       tty: true
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "256Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
+
   volumes:
     - name: docker-config
       emptyDir: {}
