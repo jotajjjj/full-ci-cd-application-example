@@ -6,74 +6,68 @@ apiVersion: v1
 kind: Pod
 metadata:
   labels:
-    app: jenkins-agent
+    app: jugadores-app
 spec:
   serviceAccountName: jenkins
   containers:
-  - name: kaniko
-    image: gcr.io/kaniko-project/executor:latest
-    command:
-    - /kaniko/executor
-    args:
-    - --help
-    resources:
-      requests:
-        cpu: "500m"
-        memory: "512Mi"
-      limits:
-        cpu: "1"
-        memory: "1Gi"
-  - name: kubectl
-    image: bitnami/kubectl:latest
-    command:
-    - /bin/sh
-    args:
-    - -c
-    - sleep 99d
-    resources:
-      requests:
-        cpu: "200m"
-        memory: "256Mi"
-      limits:
-        cpu: "500m"
-        memory: "512Mi"
-  - name: jnlp
-    image: jenkins/inbound-agent:latest
-    resources:
-      requests:
-        cpu: "100m"
-        memory: "256Mi"
-      limits:
-        cpu: "200m"
-        memory: "512Mi"
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:latest
+      command:
+        - cat
+      tty: true
+      volumeMounts:
+        - name: docker-config
+          mountPath: /kaniko/.docker/
+    - name: kubectl
+      image: bitnami/kubectl:latest
+      command:
+        - cat
+      tty: true
+  volumes:
+    - name: docker-config
+      emptyDir: {}
 """
         }
     }
 
     environment {
-        REGISTRY = "ghcr.io/jotajjj"
-        IMAGE_NAME = "jugadores-app"
-        GIT_REPO = "https://github.com/jotajjj/jugadores-app"
+        DOCKER_IMAGE = "ghcr.io/jotajjj/jugadores-app"
+        DOCKER_TAG = "latest"
     }
 
     stages {
+        stage('Prepare Docker Auth') {
+            steps {
+                container('kaniko') {
+                    withCredentials([string(credentialsId: 'ghcr-token', variable: 'GHCR_TOKEN')]) {
+                        sh '''
+                            echo "🔑 Configurando autenticación para GHCR..."
+                            mkdir -p /kaniko/.docker
+                            echo "{
+                              \\"auths\\": {
+                                \\"ghcr.io\\": {
+                                  \\"auth\\": \\"$(echo -n jotajjj:$GHCR_TOKEN | base64 -w 0)\\"
+                                }
+                              }
+                            }" > /kaniko/.docker/config.json
+                            echo "✅ Docker config.json creado en /kaniko/.docker/"
+                        '''
+                    }
+                }
+            }
+        }
+
         stage('Build & Push Docker Image') {
             steps {
                 container('kaniko') {
-                    withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
-                        sh '''
-                            /kaniko/executor \
-                              --context ${GIT_REPO} \
-                              --destination ${REGISTRY}/${IMAGE_NAME}:latest \
-                              --dockerfile Dockerfile \
-                              --destination ${REGISTRY}/${IMAGE_NAME}:$(git rev-parse --short HEAD) \
-                              --cleanup \
-                              --single-snapshot \
-                              --skip-tls-verify \
-                              --verbosity=debug \
-                              --build-arg GITHUB_TOKEN=${GITHUB_TOKEN}
-                        '''
-                    }
+                    sh '''
+                        echo "🚀 Construyendo y subiendo la imagen con Kaniko..."
+                        /kaniko/executor \
+                            --context `pwd` \
+                            --dockerfile `pwd`/Dockerfile \
+                            --destination=${DOCKER_IMAGE}:${DOCKER_TAG} \
+                            --cleanup
+                    '''
                 }
             }
         }
@@ -81,16 +75,22 @@ spec:
         stage('Deploy to Kubernetes') {
             steps {
                 container('kubectl') {
-                    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
-                        sh '''
-                            mkdir -p $HOME/.kube
-                            cp $KUBECONFIG_FILE $HOME/.kube/config
-                            kubectl apply -f k8s/deployment.yaml
-                            kubectl apply -f k8s/service.yaml
-                        '''
-                    }
+                    sh '''
+                        echo "📦 Desplegando nueva versión en Kubernetes..."
+                        kubectl set image deployment/jugadores-app jugadores-app=${DOCKER_IMAGE}:${DOCKER_TAG} -n devops-tools || true
+                        kubectl rollout status deployment/jugadores-app -n devops-tools
+                    '''
                 }
             }
+        }
+    }
+
+    post {
+        success {
+            echo '✅ Pipeline completado con éxito.'
+        }
+        failure {
+            echo '❌ Error durante la ejecución del pipeline.'
         }
     }
 }
