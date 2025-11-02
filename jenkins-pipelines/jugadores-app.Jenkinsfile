@@ -126,7 +126,7 @@ EOF
                     script {
                         echo "📦 Desplegando nueva versión en Kubernetes..."
                         withCredentials([file(credentialsId: 'kubeconfig-secret', variable: 'KUBECONFIG_FILE')]) {
-                            sh """
+                            sh '''
                                 mkdir -p /root/.kube
                                 cp ${KUBECONFIG_FILE} /root/.kube/config
                                 chmod 600 /root/.kube/config
@@ -134,7 +134,7 @@ EOF
                                 kubectl cluster-info
                                 kubectl set image deployment/jugadores-app jugadores-app=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} -n devops-tools || true
                                 kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
-                            """
+                            '''
                         }
                     }
                 }
