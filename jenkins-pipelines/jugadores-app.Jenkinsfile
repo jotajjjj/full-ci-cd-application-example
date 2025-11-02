@@ -71,7 +71,7 @@ spec:
     }
 
     environment {
-        DOCKER_IMAGE = "ghcr.io/jotajjj/jugadores-app"
+        DOCKER_IMAGE = "ghcr.io/jotajjjj/jugadores-app"
         DOCKER_TAG = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
     }
 
