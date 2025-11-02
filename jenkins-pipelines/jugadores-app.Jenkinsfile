@@ -99,6 +99,31 @@ EOF
             }
         }
 
+        // NUEVO STAGE: Verificar y crear el Secret de GHCR en Kubernetes
+        stage('Verify GHCR Secret') {
+            steps {
+                container('kubectl') {
+                    withCredentials([string(credentialsId: 'ghcr-token', variable: 'GHCR_TOKEN')]) {
+                        sh '''
+                            echo "🔍 Verificando secret de GHCR en Kubernetes..."
+                            if ! kubectl get secret ghcr-secret -n devops-tools &>/dev/null; then
+                                echo "📝 Creando secret ghcr-secret..."
+                                kubectl create secret docker-registry ghcr-secret \
+                                    --docker-server=ghcr.io \
+                                    --docker-username=jotajjjj \
+                                    --docker-password="$GHCR_TOKEN" \
+                                    --docker-email=jenkins@example.com \
+                                    -n devops-tools
+                                echo "✅ Secret creado exitosamente"
+                            else
+                                echo "✅ Secret ya existe"
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+
         stage('Build & Push Docker Image') {
             steps {
                 container('kaniko') {
@@ -127,11 +152,14 @@ EOF
                         kubectl get nodes
                         kubectl get pods -n devops-tools
                         kubectl get deployments -n devops-tools
+                        echo "📊 Verificando Resource Quotas..."
+                        kubectl get resourcequota -n devops-tools
                     '''
                 }
             }
         }
 
+        // STAGE MODIFICADO: Ahora incluye recursos obligatorios para la ResourceQuota
         stage('Create or Update Deployment') {
             steps {
                 container('kubectl') {
@@ -142,12 +170,65 @@ EOF
                             if kubectl get deployment jugadores-app -n devops-tools &>/dev/null; then
                                 echo "📦 Actualizando deployment existente..."
                                 kubectl set image deployment/jugadores-app jugadores-app="${DOCKER_IMAGE}:${DOCKER_TAG}" -n devops-tools
+                                
+                                echo "🔧 Asegurando que el deployment tenga los recursos requeridos..."
+                                # Parchear el deployment para agregar recursos si no los tiene
+                                kubectl patch deployment jugadores-app -n devops-tools -p '{
+                                    "spec": {
+                                        "template": {
+                                            "spec": {
+                                                "containers": [{
+                                                    "name": "jugadores-app",
+                                                    "resources": {
+                                                        "requests": {
+                                                            "cpu": "100m",
+                                                            "memory": "128Mi"
+                                                        },
+                                                        "limits": {
+                                                            "cpu": "200m", 
+                                                            "memory": "256Mi"
+                                                        }
+                                                    }
+                                                }]
+                                            }
+                                        }
+                                    }
+                                }' || echo "ℹ️  El deployment ya tiene recursos configurados"
                             else
-                                echo "🚀 Creando nuevo deployment..."
-                                kubectl create deployment jugadores-app \
-                                    --image=${DOCKER_IMAGE}:${DOCKER_TAG} \
-                                    --namespace=devops-tools \
-                                    --port=80
+                                echo "🚀 Creando nuevo deployment con recursos y imagePullSecrets..."
+                                cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jugadores-app
+  namespace: devops-tools
+  labels:
+    app: jugadores-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jugadores-app
+  template:
+    metadata:
+      labels:
+        app: jugadores-app
+    spec:
+      containers:
+      - name: jugadores-app
+        image: ${DOCKER_IMAGE}:${DOCKER_TAG}
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+      imagePullSecrets:
+      - name: ghcr-secret
+EOF
                             fi
                         '''
                     }
@@ -159,7 +240,7 @@ EOF
             steps {
                 container('kubectl') {
                     script {
-                        echo "⏳ Esperando a que el deployment esté listo (con timeout más largo)..."
+                        echo "⏳ Esperando a que el deployment esté listo..."
                         sh '''
                             # Esperar con timeout más largo para la primera descarga de imagen
                             timeout 600s bash -c '
@@ -183,6 +264,7 @@ EOF
             }
         }
 
+        // STAGE MEJORADO: Más información de diagnóstico
         stage('Verify Application') {
             steps {
                 container('kubectl') {
@@ -193,10 +275,23 @@ EOF
                         echo "📋 Pods del deployment:"
                         kubectl get pods -n devops-tools -l app=jugadores-app -o wide
                         
-                        # Verificar logs si el pod está corriendo
-                        if kubectl get pods -n devops-tools -l app=jugadores-app -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; then
-                            echo "📄 Últimos logs del pod:"
-                            kubectl logs -n devops-tools -l app=jugadores-app --tail=10 || echo "No se pudieron obtener logs aún"
+                        echo "🔎 Diagnóstico detallado:"
+                        # Verificar eventos recientes
+                        echo "📢 Últimos eventos:"
+                        kubectl get events -n devops-tools --sort-by='.lastTimestamp' | tail -10
+                        
+                        # Verificar detalles del pod si existe
+                        POD_NAME=$(kubectl get pods -n devops-tools -l app=jugadores-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                        if [ -n "$POD_NAME" ]; then
+                            echo "🔍 Describiendo pod: $POD_NAME"
+                            kubectl describe pod $POD_NAME -n devops-tools
+                            
+                            echo "📄 Logs del pod:"
+                            kubectl logs $POD_NAME -n devops-tools --tail=50 || echo "No se pudieron obtener logs aún"
+                        else
+                            echo "❌ No hay pods corriendo para el deployment"
+                            echo "📢 Mostrando todos los eventos para diagnóstico:"
+                            kubectl get events -n devops-tools --sort-by='.lastTimestamp' | tail -20
                         fi
                         
                         echo "✅ Proceso de despliegue completado"
