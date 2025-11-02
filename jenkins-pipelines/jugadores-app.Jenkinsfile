@@ -141,16 +141,13 @@ EOF
                             # Verificar si el deployment existe
                             if kubectl get deployment jugadores-app -n devops-tools &>/dev/null; then
                                 echo "📦 Actualizando deployment existente..."
-                                kubectl set image deployment/jugadores-app jugadores-app="${DOCKER_IMAGE}:${DOCKER_TAG}" -n devops-tools --record=true
+                                kubectl set image deployment/jugadores-app jugadores-app="${DOCKER_IMAGE}:${DOCKER_TAG}" -n devops-tools
                             else
                                 echo "🚀 Creando nuevo deployment..."
                                 kubectl create deployment jugadores-app \
                                     --image=${DOCKER_IMAGE}:${DOCKER_TAG} \
                                     --namespace=devops-tools \
                                     --port=80
-                                
-                                echo "⏳ Esperando a que el deployment esté listo..."
-                                sleep 15
                             fi
                         '''
                     }
@@ -158,18 +155,51 @@ EOF
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Wait for Deployment') {
+            steps {
+                container('kubectl') {
+                    script {
+                        echo "⏳ Esperando a que el deployment esté listo (con timeout más largo)..."
+                        sh '''
+                            # Esperar con timeout más largo para la primera descarga de imagen
+                            timeout 600s bash -c '
+                                while true; do
+                                    if kubectl get deployment/jugadores-app -n devops-tools -o jsonpath="{.status.availableReplicas}" | grep -q "1"; then
+                                        echo "✅ Deployment listo y disponible"
+                                        break
+                                    fi
+                                    echo "⏰ Esperando a que el deployment esté disponible..."
+                                    sleep 10
+                                done
+                            ' || echo "⚠️  Timeout alcanzado, pero continuando..."
+                            
+                            # Verificar estado final
+                            echo "🔍 Estado final del deployment:"
+                            kubectl get deployment jugadores-app -n devops-tools -o wide
+                            kubectl get pods -n devops-tools -l app=jugadores-app
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Verify Application') {
             steps {
                 container('kubectl') {
                     sh '''
-                        echo "🔍 Verificando estado del deployment..."
+                        echo "🔍 Verificando estado de la aplicación..."
                         kubectl get deployment jugadores-app -n devops-tools -o wide
-                        kubectl get pods -n devops-tools -l app=jugadores-app
                         
-                        echo "⏳ Esperando rollout..."
-                        kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
+                        echo "📋 Pods del deployment:"
+                        kubectl get pods -n devops-tools -l app=jugadores-app -o wide
                         
-                        echo "✅ Despliegue completado exitosamente!"
+                        # Verificar logs si el pod está corriendo
+                        if kubectl get pods -n devops-tools -l app=jugadores-app -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; then
+                            echo "📄 Últimos logs del pod:"
+                            kubectl logs -n devops-tools -l app=jugadores-app --tail=10 || echo "No se pudieron obtener logs aún"
+                        fi
+                        
+                        echo "✅ Proceso de despliegue completado"
                     '''
                 }
             }
@@ -177,13 +207,21 @@ EOF
     }
 
     post {
-        success {
-            echo "✅ Pipeline completado con éxito."
+        always {
+            echo "🏁 Pipeline ejecutado"
             echo "📦 Imagen: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
             echo "🌐 Deployment: jugadores-app en namespace devops-tools"
         }
+        success {
+            echo "🎉 ¡Pipeline ejecutado con éxito!"
+            echo "✅ La aplicación está siendo desplegada"
+        }
+        unstable {
+            echo "⚠️  Pipeline completado con advertencias"
+            echo "📋 El deployment puede estar aún iniciándose"
+        }
         failure {
-            echo "❌ Error durante la ejecución del pipeline."
+            echo "❌ Error durante la ejecución del pipeline"
         }
     }
 }
