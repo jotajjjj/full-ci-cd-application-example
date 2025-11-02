@@ -131,7 +131,7 @@ EOF
                                     --docker-server=ghcr.io \
                                     --docker-username=jotajjjj \
                                     --docker-password="$GHCR_TOKEN" \
-                                    --docker-email=jenkins@example.com \
+                                    --docker-email=jonathaj@ucm.es \
                                     -n ${DEPLOY_NAMESPACE}
                                 echo "✅ Secret creado exitosamente en namespace ${DEPLOY_NAMESPACE}"
                             else
