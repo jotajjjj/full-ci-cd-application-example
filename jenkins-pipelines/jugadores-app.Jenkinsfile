@@ -46,8 +46,8 @@ spec:
           mountPath: /home/jenkins/agent
 
     - name: kubectl
-      image: bitnami/kubectl:latest
-      command: ["/bin/bash"]
+      image: alpine/k8s:latest
+      command: ["/bin/sh"]
       args: ["-c", "while true; do sleep 30; done"]
       tty: true
       resources:
@@ -125,22 +125,22 @@ EOF
                     script {
                         echo "📦 Desplegando nueva versión en Kubernetes..."
                         withCredentials([file(credentialsId: 'kubeconfig-secret', variable: 'KUBECONFIG_FILE')]) {
-                            sh """
+                            sh '''
                                 mkdir -p /root/.kube
-                                cp ${KUBECONFIG_FILE} /root/.kube/config
+                                cp "${KUBECONFIG_FILE}" /root/.kube/config
                                 chmod 600 /root/.kube/config
                                 
                                 echo "🔍 Verificando conexión al cluster..."
                                 kubectl cluster-info
                                 
                                 echo "🔄 Actualizando despliegue..."
-                                kubectl set image deployment/jugadores-app jugadores-app=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} -n devops-tools --record=true
+                                kubectl set image deployment/jugadores-app jugadores-app="${DOCKER_IMAGE}:${DOCKER_TAG}" -n devops-tools --record=true
                                 
                                 echo "⏳ Esperando rollout..."
                                 kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
                                 
                                 echo "✅ Despliegue completado exitosamente!"
-                            """
+                            '''
                         }
                     }
                 }
