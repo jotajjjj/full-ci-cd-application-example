@@ -46,7 +46,7 @@ spec:
           mountPath: /home/jenkins/agent
 
     - name: kubectl
-      image: bitnami/kubectl:latest
+      image: bitnami/kubectl:1.29-debian-12
       command: ["/bin/sh"]
       args: ["-c", "tail -f /dev/null"]
       tty: true
