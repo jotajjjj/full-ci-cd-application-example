@@ -47,8 +47,8 @@ spec:
 
     - name: kubectl
       image: bitnami/kubectl:latest
-      command: ["sleep"]
-      args: ["infinity"]
+      command: ["/bin/bash"]
+      args: ["-c", "while true; do sleep 30; done"]
       tty: true
       resources:
         requests:
@@ -105,8 +105,7 @@ EOF
                     script {
                         echo "🚀 Construyendo y subiendo la imagen con Kaniko..."
                         sh """
-                            echo "📂 Verificando contenido de la aplicación:"
-                            ls -la /home/jenkins/agent/workspace/ranch_para_app_jugadores_develop/apps/jugadores-app/
+                            echo "📦 Construyendo imagen: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
                             
                             /kaniko/executor \\
                                 --context=/home/jenkins/agent/workspace/ranch_para_app_jugadores_develop/apps/jugadores-app/ \\
@@ -126,15 +125,22 @@ EOF
                     script {
                         echo "📦 Desplegando nueva versión en Kubernetes..."
                         withCredentials([file(credentialsId: 'kubeconfig-secret', variable: 'KUBECONFIG_FILE')]) {
-                            sh '''
+                            sh """
                                 mkdir -p /root/.kube
                                 cp ${KUBECONFIG_FILE} /root/.kube/config
                                 chmod 600 /root/.kube/config
                                 
+                                echo "🔍 Verificando conexión al cluster..."
                                 kubectl cluster-info
-                                kubectl set image deployment/jugadores-app jugadores-app=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} -n devops-tools || true
+                                
+                                echo "🔄 Actualizando despliegue..."
+                                kubectl set image deployment/jugadores-app jugadores-app=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} -n devops-tools --record=true
+                                
+                                echo "⏳ Esperando rollout..."
                                 kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
-                            '''
+                                
+                                echo "✅ Despliegue completado exitosamente!"
+                            """
                         }
                     }
                 }
