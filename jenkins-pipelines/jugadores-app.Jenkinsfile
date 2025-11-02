@@ -46,9 +46,9 @@ spec:
           mountPath: /home/jenkins/agent
 
     - name: kubectl
-      image: alpine/k8s:latest
+      image: bitnami/kubectl:latest
       command: ["/bin/sh"]
-      args: ["-c", "while true; do sleep 30; done"]
+      args: ["-c", "tail -f /dev/null"]
       tty: true
       resources:
         requests:
