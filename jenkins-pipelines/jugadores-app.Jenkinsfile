@@ -87,7 +87,7 @@ spec:
 {
   "auths": {
     "ghcr.io": {
-      "auth": "$(echo -n "jotajjj:$GHCR_TOKEN" | base64 -w 0)"
+      "auth": "$(echo -n "jotajjjj:$GHCR_TOKEN" | base64 -w 0)"
     }
   }
 }
