@@ -119,29 +119,33 @@ EOF
             }
         }
 
+        stage('Verify Kubernetes Access') {
+            steps {
+                container('kubectl') {
+                    sh '''
+                        echo "🔍 Verificando acceso a Kubernetes..."
+                        kubectl get nodes
+                        kubectl get pods -n devops-tools
+                        kubectl get deployments -n devops-tools
+                    '''
+                }
+            }
+        }
+
         stage('Deploy to Kubernetes') {
             steps {
                 container('kubectl') {
                     script {
                         echo "📦 Desplegando nueva versión en Kubernetes..."
-                        withCredentials([file(credentialsId: 'kubeconfig-secret', variable: 'KUBECONFIG_FILE')]) {
-                            sh '''
-                                mkdir -p /root/.kube
-                                cp "${KUBECONFIG_FILE}" /root/.kube/config
-                                chmod 600 /root/.kube/config
-                                
-                                echo "🔍 Verificando conexión al cluster..."
-                                kubectl cluster-info
-                                
-                                echo "🔄 Actualizando despliegue..."
-                                kubectl set image deployment/jugadores-app jugadores-app="${DOCKER_IMAGE}:${DOCKER_TAG}" -n devops-tools --record=true
-                                
-                                echo "⏳ Esperando rollout..."
-                                kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
-                                
-                                echo "✅ Despliegue completado exitosamente!"
-                            '''
-                        }
+                        sh '''
+                            echo "🔄 Actualizando despliegue..."
+                            kubectl set image deployment/jugadores-app jugadores-app="${DOCKER_IMAGE}:${DOCKER_TAG}" -n devops-tools --record=true
+                            
+                            echo "⏳ Esperando rollout..."
+                            kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
+                            
+                            echo "✅ Despliegue completado exitosamente!"
+                        '''
                     }
                 }
             }
