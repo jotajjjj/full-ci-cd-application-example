@@ -34,11 +34,11 @@ spec:
       tty: true
       resources:
         requests:
-          cpu: "500m"
-          memory: "512Mi"
-        limits:
           cpu: "1000m"
-          memory: "1Gi"
+          memory: "2Gi"
+        limits:
+          cpu: "2000m"
+          memory: "4Gi"
       volumeMounts:
         - name: docker-config
           mountPath: /kaniko/.docker
