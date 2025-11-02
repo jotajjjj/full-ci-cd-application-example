@@ -73,7 +73,6 @@ spec:
     environment {
         DOCKER_IMAGE = "ghcr.io/jotajjjj/jugadores-app"
         DOCKER_TAG = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
-        // NUEVO: Definir namespace basado en la branch
         DEPLOY_NAMESPACE = "${env.BRANCH_NAME == 'develop' ? 'dev' : 'devops-tools'}"
     }
 
@@ -101,7 +100,6 @@ EOF
             }
         }
 
-        // NUEVO: Verificar y crear namespace si no existe
         stage('Verify Namespace') {
             steps {
                 container('kubectl') {
@@ -119,24 +117,31 @@ EOF
             }
         }
 
-        stage('Verify GHCR Secret') {
+        // REEMPLAZADO: Este stage ELIMINA y RECREA el secret con el email correcto
+        stage('Create or Update GHCR Secret') {
             steps {
                 container('kubectl') {
                     withCredentials([string(credentialsId: 'ghcr-token', variable: 'GHCR_TOKEN')]) {
                         sh '''
-                            echo "🔍 Verificando secret de GHCR en Kubernetes en namespace ${DEPLOY_NAMESPACE}..."
-                            if ! kubectl get secret ghcr-secret -n ${DEPLOY_NAMESPACE} &>/dev/null; then
-                                echo "📝 Creando secret ghcr-secret en namespace ${DEPLOY_NAMESPACE}..."
-                                kubectl create secret docker-registry ghcr-secret \
-                                    --docker-server=ghcr.io \
-                                    --docker-username=jotajjjj \
-                                    --docker-password="$GHCR_TOKEN" \
-                                    --docker-email=jonathaj@ucm.es \
-                                    -n ${DEPLOY_NAMESPACE}
-                                echo "✅ Secret creado exitosamente en namespace ${DEPLOY_NAMESPACE}"
-                            else
-                                echo "✅ Secret ya existe en namespace ${DEPLOY_NAMESPACE}"
-                            fi
+                            echo "🔄 Creando/actualizando secret de GHCR en namespace ${DEPLOY_NAMESPACE}..."
+                            
+                            # Siempre eliminar y recrear el secret para asegurar que sea correcto
+                            kubectl delete secret ghcr-secret -n ${DEPLOY_NAMESPACE} --ignore-not-found
+                            
+                            # Crear el secret usando el EMAIL CORRECTO
+                            kubectl create secret docker-registry ghcr-secret \
+                                --docker-server=ghcr.io \
+                                --docker-username=jotajjjj \
+                                --docker-password="$GHCR_TOKEN" \
+                                --docker-email=jonathaj@ucm.es \
+                                -n ${DEPLOY_NAMESPACE}
+                            
+                            echo "✅ Secret ghcr-secret creado en namespace ${DEPLOY_NAMESPACE}"
+                            
+                            # Verificación adicional del secret
+                            echo "🔍 Verificando secret creado:"
+                            kubectl get secret ghcr-secret -n ${DEPLOY_NAMESPACE} -o jsonpath='{.type}'
+                            echo ""
                         '''
                     }
                 }
@@ -169,20 +174,15 @@ EOF
                     sh '''
                         echo "🔍 Verificando acceso a Kubernetes..."
                         kubectl get nodes
-                        echo "📊 Verificando namespaces:"
-                        kubectl get namespaces
                         echo "📋 Pods en namespace ${DEPLOY_NAMESPACE}:"
                         kubectl get pods -n ${DEPLOY_NAMESPACE}
                         echo "📦 Deployments en namespace ${DEPLOY_NAMESPACE}:"
                         kubectl get deployments -n ${DEPLOY_NAMESPACE}
-                        echo "📊 Verificando Resource Quotas en namespace ${DEPLOY_NAMESPACE}..."
-                        kubectl get resourcequota -n ${DEPLOY_NAMESPACE} || echo "No hay Resource Quotas en este namespace"
                     '''
                 }
             }
         }
 
-        // MODIFICADO: Ahora usa DEPLOY_NAMESPACE en lugar de devops-tools
         stage('Create or Update Deployment') {
             steps {
                 container('kubectl') {
@@ -217,7 +217,7 @@ EOF
                                     }
                                 }' || echo "ℹ️  El deployment ya tiene recursos configurados"
                             else
-                                echo "🚀 Creando nuevo deployment con recursos y imagePullSecrets en namespace ${DEPLOY_NAMESPACE}..."
+                                echo "🚀 Creando nuevo deployment en namespace ${DEPLOY_NAMESPACE}..."
                                 cat <<EOF | kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
@@ -227,7 +227,7 @@ metadata:
   labels:
     app: jugadores-app
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: jugadores-app
@@ -239,6 +239,7 @@ spec:
       containers:
       - name: jugadores-app
         image: ${DOCKER_IMAGE}:${DOCKER_TAG}
+        imagePullPolicy: Always
         ports:
         - containerPort: 80
         resources:
@@ -258,24 +259,30 @@ EOF
             }
         }
 
-        // MODIFICADO: Usa DEPLOY_NAMESPACE
+        // CORREGIDO: Usando sh en lugar de bash
         stage('Wait for Deployment') {
             steps {
                 container('kubectl') {
                     script {
                         echo "⏳ Esperando a que el deployment esté listo en namespace ${DEPLOY_NAMESPACE}..."
                         sh '''
-                            # Esperar con timeout más largo para la primera descarga de imagen
-                            timeout 600s bash -c '
-                                while true; do
-                                    if kubectl get deployment/jugadores-app -n ${DEPLOY_NAMESPACE} -o jsonpath="{.status.availableReplicas}" | grep -q "1"; then
-                                        echo "✅ Deployment listo y disponible"
-                                        break
-                                    fi
-                                    echo "⏰ Esperando a que el deployment esté disponible..."
-                                    sleep 10
-                                done
-                            ' || echo "⚠️  Timeout alcanzado, pero continuando..."
+                            # Esperar usando sh (Alpine no tiene bash)
+                            echo "⏰ Esperando a que el deployment esté disponible (máximo 10 minutos)..."
+                            COUNTER=0
+                            while [ $COUNTER -lt 60 ]; do
+                                AVAILABLE=$(kubectl get deployment/jugadores-app -n ${DEPLOY_NAMESPACE} -o jsonpath="{.status.availableReplicas}" 2>/dev/null || echo "0")
+                                if [ "$AVAILABLE" = "2" ]; then
+                                    echo "✅ Deployment listo y disponible"
+                                    break
+                                fi
+                                echo "⏰ Esperando a que el deployment esté disponible... ($((COUNTER * 10))s)"
+                                sleep 10
+                                COUNTER=$((COUNTER + 1))
+                            done
+                            
+                            if [ $COUNTER -eq 60 ]; then
+                                echo "⚠️  Timeout alcanzado, pero continuando..."
+                            fi
                             
                             # Verificar estado final
                             echo "🔍 Estado final del deployment:"
@@ -287,7 +294,6 @@ EOF
             }
         }
 
-        // MODIFICADO: Usa DEPLOY_NAMESPACE
         stage('Verify Application') {
             steps {
                 container('kubectl') {
@@ -300,19 +306,14 @@ EOF
                         
                         echo "🔎 Diagnóstico detallado:"
                         # Verificar eventos recientes
-                        echo "📢 Eventos del namespace ${DEPLOY_NAMESPACE}:"
+                        echo "📢 Últimos eventos:"
                         kubectl get events -n ${DEPLOY_NAMESPACE} --sort-by='.lastTimestamp' | tail -10
                         
-                        # Verificar detalles del pod si existe
+                        # Verificar el primer pod del deployment
                         POD_NAME=$(kubectl get pods -n ${DEPLOY_NAMESPACE} -l app=jugadores-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
                         if [ -n "$POD_NAME" ]; then
                             echo "🔍 Describiendo pod: $POD_NAME"
                             kubectl describe pod $POD_NAME -n ${DEPLOY_NAMESPACE}
-                            
-                            echo "📄 Logs del pod:"
-                            kubectl logs $POD_NAME -n ${DEPLOY_NAMESPACE} --tail=50 || echo "No se pudieron obtener logs aún"
-                        else
-                            echo "ℹ️  No hay pods corriendo aún en namespace ${DEPLOY_NAMESPACE}"
                         fi
                         
                         echo "✅ Proceso de despliegue completado"
