@@ -132,21 +132,45 @@ EOF
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Create or Update Deployment') {
             steps {
                 container('kubectl') {
                     script {
-                        echo "📦 Desplegando nueva versión en Kubernetes..."
+                        echo "🔄 Creando o actualizando deployment..."
                         sh '''
-                            echo "🔄 Actualizando despliegue..."
-                            kubectl set image deployment/jugadores-app jugadores-app="${DOCKER_IMAGE}:${DOCKER_TAG}" -n devops-tools --record=true
-                            
-                            echo "⏳ Esperando rollout..."
-                            kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
-                            
-                            echo "✅ Despliegue completado exitosamente!"
+                            # Verificar si el deployment existe
+                            if kubectl get deployment jugadores-app -n devops-tools &>/dev/null; then
+                                echo "📦 Actualizando deployment existente..."
+                                kubectl set image deployment/jugadores-app jugadores-app="${DOCKER_IMAGE}:${DOCKER_TAG}" -n devops-tools --record=true
+                            else
+                                echo "🚀 Creando nuevo deployment..."
+                                kubectl create deployment jugadores-app \
+                                    --image=${DOCKER_IMAGE}:${DOCKER_TAG} \
+                                    --namespace=devops-tools \
+                                    --port=80
+                                
+                                echo "⏳ Esperando a que el deployment esté listo..."
+                                sleep 15
+                            fi
                         '''
                     }
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                container('kubectl') {
+                    sh '''
+                        echo "🔍 Verificando estado del deployment..."
+                        kubectl get deployment jugadores-app -n devops-tools -o wide
+                        kubectl get pods -n devops-tools -l app=jugadores-app
+                        
+                        echo "⏳ Esperando rollout..."
+                        kubectl rollout status deployment/jugadores-app -n devops-tools --timeout=300s
+                        
+                        echo "✅ Despliegue completado exitosamente!"
+                    '''
                 }
             }
         }
@@ -156,6 +180,7 @@ EOF
         success {
             echo "✅ Pipeline completado con éxito."
             echo "📦 Imagen: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
+            echo "🌐 Deployment: jugadores-app en namespace devops-tools"
         }
         failure {
             echo "❌ Error durante la ejecución del pipeline."
